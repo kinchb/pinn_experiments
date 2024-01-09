@@ -5,6 +5,91 @@ import numpy as np
 import scipy.io
 
 
+# MSE loss for complex numbers
+def mse_loss(pred, target):
+    # return torch.mean(torch.square(torch.abs(pred - target)))
+    real_part = torch.real(pred) - torch.real(target)
+    imag_part = torch.imag(pred) - torch.imag(target)
+    return torch.mean(torch.square(real_part)) + torch.mean(torch.square(imag_part))
+
+
+# calculate the partial derivatives of a complex-valued function f with respect
+# to its inputs, assuming its inputs are the real-valued position and time coordinates
+def calculateComplexDerivatives(f, inputs):
+    df_dinputs_real = torch.autograd.grad(
+        torch.real(f),
+        inputs,
+        grad_outputs=torch.ones_like(torch.real(f)),
+        create_graph=True,
+    )[0]
+    df_dinputs_imag = torch.autograd.grad(
+        torch.imag(f),
+        inputs,
+        grad_outputs=torch.ones_like(torch.imag(f)),
+        create_graph=True,
+    )[0]
+    df_dx = torch.view_as_complex(
+        torch.stack((df_dinputs_real[:, 0], df_dinputs_imag[:, 0]), dim=1)
+    )
+    df_dt = torch.view_as_complex(
+        torch.stack((df_dinputs_real[:, 1], df_dinputs_imag[:, 1]), dim=1)
+    )
+    return df_dx, df_dt
+
+
+def calculateOperator(outputs, inputs):
+    dh_dx, dh_dt = calculateComplexDerivatives(outputs, inputs)
+    dh_dxx, _ = calculateComplexDerivatives(dh_dx, inputs)
+    # multiply dh_dt by the imaginary unit
+    imaginary_unit = torch.complex(torch.tensor(0.0), torch.tensor(1.0))
+    f = imaginary_unit * dh_dt + 0.5 * dh_dxx + torch.square(outputs) * outputs
+    return f
+
+
+def calculateOperatorLoss(outputs, inputs):
+    u = torch.real(outputs)
+    v = torch.imag(outputs)
+    u_x_and_t = torch.autograd.grad(
+        u,
+        inputs,
+        grad_outputs=torch.ones_like(u),
+        create_graph=True,
+        allow_unused=True,
+        materialize_grads=True,
+    )[0]
+    breakpoint()
+    u_x, u_t = u_x_and_t[:, 0], u_x_and_t[:, 1]
+    v_x_and_t = torch.autograd.grad(
+        v,
+        inputs,
+        grad_outputs=torch.ones_like(v),
+        create_graph=True,
+        allow_unused=True,
+        materialize_grads=True,
+    )[0]
+    v_x, v_t = v_x_and_t[:, 0], v_x_and_t[:, 1]
+    u_xx = torch.autograd.grad(
+        u_x,
+        inputs,
+        grad_outputs=torch.ones_like(u_x),
+        create_graph=True,
+        allow_unused=True,
+        materialize_grads=True,
+    )[0][:, 0]
+    v_xx = torch.autograd.grad(
+        v_x,
+        inputs,
+        grad_outputs=torch.ones_like(v_x),
+        create_graph=True,
+        allow_unused=True,
+        materialize_grads=True,
+    )[0][:, 0]
+    f_u = u_t + 0.5 * v_xx + (torch.square(u) + torch.square(v)) * v
+    f_v = v_t - 0.5 * u_xx - (torch.square(u) + torch.square(v)) * u
+    loss = torch.mean(torch.square(f_u)) + torch.mean(torch.square(f_v))
+    return loss
+
+
 def evalAndCompare(model, dset):
     model.eval()
     with torch.no_grad():
@@ -15,10 +100,8 @@ def evalAndCompare(model, dset):
         # evaluate the model at each point in the grid
         output = model(grid)
         # reshape the output to match the shape of the grid
-        output = output.reshape(*x_grid.shape, 2)
-        output_h = torch.sqrt(
-            torch.square(output[:, :, 0]) + torch.square(output[:, :, 1])
-        )
+        output = output.reshape(*x_grid.shape)
+        output_h = torch.abs(output)
 
     return x_grid, t_grid, output_h, dset.exact_h
 
@@ -53,7 +136,7 @@ class SchrodingersEqDataset(Dataset):
     def __getitem__(self, idx):
         return (
             torch.tensor([self.x_sample[idx], self.t_sample[idx]], requires_grad=True),
-            torch.tensor([self.u_sample[idx], self.v_sample[idx]]),
+            torch.complex(self.u_sample[idx], self.v_sample[idx]),
         )
 
 
@@ -81,4 +164,5 @@ class SimplePINN(nn.Module):
             x = layer(x)
             x = torch.tanh(x)
         x = self.head(x)
+        x = torch.view_as_complex(x)
         return x
