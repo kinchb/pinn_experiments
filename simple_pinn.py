@@ -13,6 +13,16 @@ def mse_loss(pred, target):
     return torch.mean(torch.square(real_part)) + torch.mean(torch.square(imag_part))
 
 
+def mseLoss(preds, targets):
+    pred_u = preds[:, 0]
+    pred_v = preds[:, 1]
+    target_u = targets[:, 0]
+    target_v = targets[:, 1]
+    return torch.mean(torch.square(pred_u - target_u)) + torch.mean(
+        torch.square(pred_v - target_v)
+    )
+
+
 # calculate the partial derivatives of a complex-valued function f with respect
 # to its inputs, assuming its inputs are the real-valued position and time coordinates
 def calculateComplexDerivatives(f, inputs):
@@ -47,50 +57,98 @@ def calculateOperator(outputs, inputs):
 
 
 def calculateOperatorLoss(outputs, inputs):
-    u = torch.real(outputs)
-    v = torch.imag(outputs)
-    u_x_and_t = torch.autograd.grad(
+    u = outputs[:, 0]
+    v = outputs[:, 1]
+    x = inputs[:, 0]
+    t = inputs[:, 1]
+    u_t = torch.autograd.grad(
         u,
-        inputs,
+        t,
         grad_outputs=torch.ones_like(u),
         create_graph=True,
         allow_unused=True,
         materialize_grads=True,
     )[0]
-    breakpoint()
-    u_x, u_t = u_x_and_t[:, 0], u_x_and_t[:, 1]
-    v_x_and_t = torch.autograd.grad(
+    u_x = torch.autograd.grad(
+        u,
+        x,
+        grad_outputs=torch.ones_like(u),
+        create_graph=True,
+        allow_unused=True,
+        materialize_grads=True,
+    )[0]
+    v_t = torch.autograd.grad(
         v,
-        inputs,
+        t,
         grad_outputs=torch.ones_like(v),
         create_graph=True,
         allow_unused=True,
         materialize_grads=True,
     )[0]
-    v_x, v_t = v_x_and_t[:, 0], v_x_and_t[:, 1]
+    v_x = torch.autograd.grad(
+        v,
+        x,
+        grad_outputs=torch.ones_like(v),
+        create_graph=True,
+        allow_unused=True,
+        materialize_grads=True,
+    )[0]
     u_xx = torch.autograd.grad(
         u_x,
-        inputs,
+        x,
         grad_outputs=torch.ones_like(u_x),
         create_graph=True,
         allow_unused=True,
         materialize_grads=True,
-    )[0][:, 0]
+    )[0]
     v_xx = torch.autograd.grad(
         v_x,
-        inputs,
+        x,
         grad_outputs=torch.ones_like(v_x),
         create_graph=True,
         allow_unused=True,
         materialize_grads=True,
-    )[0][:, 0]
+    )[0]
     f_u = u_t + 0.5 * v_xx + (torch.square(u) + torch.square(v)) * v
     f_v = v_t - 0.5 * u_xx - (torch.square(u) + torch.square(v)) * u
     loss = torch.mean(torch.square(f_u)) + torch.mean(torch.square(f_v))
     return loss
 
 
+def calcBoundaryPartials(outputs, inputs):
+    u = outputs[:, 0]
+    v = outputs[:, 1]
+    x = inputs[:, 0]
+    u_x = torch.autograd.grad(
+        u,
+        x,
+        grad_outputs=torch.ones_like(u),
+        create_graph=True,
+        allow_unused=True,
+        materialize_grads=True,
+    )[0]
+    v_x = torch.autograd.grad(
+        v,
+        x,
+        grad_outputs=torch.ones_like(v),
+        create_graph=True,
+        allow_unused=True,
+        materialize_grads=True,
+    )[0]
+    return torch.stack((u_x, v_x), dim=1)
+
+
+def calculateBoundaryLoss(left_inputs, left_outputs, right_inputs, right_outputs):
+    bndLoss = mseLoss(left_outputs, right_outputs)
+    left_h_x = calcBoundaryPartials(left_outputs, left_inputs)
+    right_h_x = calcBoundaryPartials(right_outputs, right_inputs)
+    bndDerivLoss = mseLoss(left_h_x, right_h_x)
+    loss = bndLoss + bndDerivLoss
+    return loss
+
+
 def evalAndCompare(model, dset):
+    model.to("cpu")
     model.eval()
     with torch.no_grad():
         x_grid, t_grid = torch.meshgrid(dset.x, dset.t, indexing="ij")
@@ -100,8 +158,10 @@ def evalAndCompare(model, dset):
         # evaluate the model at each point in the grid
         output = model(grid)
         # reshape the output to match the shape of the grid
-        output = output.reshape(*x_grid.shape)
-        output_h = torch.abs(output)
+        output = output.reshape(*x_grid.shape, 2)
+        output_h = torch.sqrt(
+            torch.square(output[:, :, 0]) + torch.square(output[:, :, 1])
+        )
 
     return x_grid, t_grid, output_h, dset.exact_h
 
@@ -118,25 +178,41 @@ class SchrodingersEqDataset(Dataset):
         self.exact_h = torch.sqrt(
             torch.square(self.exact_u) + torch.square(self.exact_v)
         )
-        # prepare the input data for sampling
         self.points_to_sample = points_to_sample
-        # in principle we want this to be at either t = 0 or x = the boundaries,
-        # but for now let's just randomly sample
-        x_indices = torch.randint(0, len(self.x), (self.points_to_sample,))
-        t_indices = torch.randint(0, len(self.t), (self.points_to_sample,))
-        self.x_sample = self.x[x_indices]
-        self.t_sample = self.t[t_indices]
-        self.u_sample = self.exact_u[x_indices, t_indices]
-        self.v_sample = self.exact_v[x_indices, t_indices]
-        self.h_sample = self.exact_h[x_indices, t_indices]
 
     def __len__(self):
         return self.points_to_sample
 
     def __getitem__(self, idx):
+        # this is done via a Latin Hypercube sampling method in the paper,
+        # but for now let's just randomly sample the collocation points in x and t
+        x = np.random.uniform(self.x[0], self.x[-1])
+        t = np.random.uniform(self.t[0], self.t[-1])
+        return torch.tensor([x, t], requires_grad=True)
+
+    def getRandomInitSoln(self, points_to_sample):
+        # return the initial condition at a random sampling of points in x
+        x_indices = torch.randint(0, len(self.x), (points_to_sample,))
+        x_sample = self.x[x_indices]
+        t_sample = torch.zeros_like(x_sample)
+        u_sample = self.exact_u[x_indices, 0]
+        v_sample = self.exact_v[x_indices, 0]
         return (
-            torch.tensor([self.x_sample[idx], self.t_sample[idx]], requires_grad=True),
-            torch.complex(self.u_sample[idx], self.v_sample[idx]),
+            torch.stack([x_sample, t_sample], dim=1),
+            torch.stack([u_sample, v_sample], dim=1),
+        )
+
+    def getRandomBoundaryPoints(self, points_to_sample):
+        # return the boundary condition at a random sampling of points in t
+        t_indices = torch.randint(0, len(self.t), (points_to_sample,))
+        t_sample = self.t[t_indices]
+        xl_sample = torch.ones_like(t_sample) * self.x[0]
+        xl_sample.requires_grad = True
+        xr_sample = torch.ones_like(t_sample) * self.x[-1]
+        xr_sample.requires_grad = True
+        return (
+            torch.stack([xl_sample, t_sample], dim=1),
+            torch.stack([xr_sample, t_sample], dim=1),
         )
 
 
@@ -164,5 +240,5 @@ class SimplePINN(nn.Module):
             x = layer(x)
             x = torch.tanh(x)
         x = self.head(x)
-        x = torch.view_as_complex(x)
+        # x = torch.view_as_complex(x)
         return x
