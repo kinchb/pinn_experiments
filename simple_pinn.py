@@ -240,5 +240,4 @@ class SimplePINN(nn.Module):
             x = layer(x)
             x = torch.tanh(x)
         x = self.head(x)
-        # x = torch.view_as_complex(x)
         return x
