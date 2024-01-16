@@ -22,11 +22,9 @@ class SimplePINN(nn.Module):
         self.head = nn.Linear(hidden_layers[-1], output_size)
 
         # optional, loss weighting parameters
-        self.loss_params = nn.Parameter(torch.ones(3))
-        self.loss_weights = torch.softmax(self.loss_params, dim=0)
+        self.loss_weights = torch.softmax(torch.ones(3), dim=0)
 
     def forward(self, x):
-        self.loss_weights = torch.softmax(self.loss_params, dim=0)
         for layer in self.hidden_layers:
             x = layer(x)
             x = torch.tanh(x)
