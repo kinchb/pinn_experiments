@@ -8,6 +8,8 @@ class SimplePINN(nn.Module):
         input_size,
         hidden_layers,
         output_size,
+        activation=nn.ReLU(),
+        use_bias_in_output_layer=False,
     ):
         super(SimplePINN, self).__init__()
         if len(hidden_layers) == 0:
@@ -19,14 +21,15 @@ class SimplePINN(nn.Module):
                 for i in range(1, len(hidden_layers))
             ]
         )
-        self.head = nn.Linear(hidden_layers[-1], output_size)
+        self.head = nn.Linear(
+            hidden_layers[-1], output_size, bias=use_bias_in_output_layer
+        )
 
-        # optional, loss weighting parameters
-        self.loss_weights = torch.softmax(torch.ones(3), dim=0)
+        self.activation = activation
 
     def forward(self, x):
         for layer in self.hidden_layers:
             x = layer(x)
-            x = torch.tanh(x)
+            x = self.activation(x)
         x = self.head(x)
         return x
