@@ -108,7 +108,6 @@ def collocation_based_PDE_residual_loss(inputs, F_t, F_x):
             create_graph=True,
         )[0][..., 1]
     loss_structure = torch.square(dF_t_dt + dF_x_dx)
-    breakpoint()
     loss = torch.mean(loss_structure)
     loss_structure = loss_structure.clone().detach()
     return loss, loss_structure
@@ -134,9 +133,12 @@ def monopole_loss(inputs, mhd_state_variables):
 # compute the collocation point-based initial condition and boundary loss functions
 # for the Brio and Wu shock tube problem specifically, Brio and Wu (1988)
 def collocation_based_brio_and_wu_IC_BC_residual_loss(
-    model, eos, Nx=101, Nt=101, device="cpu"
+    model, eos, Nt=101, Nx=101, t_p=None, x_p=None, device="cpu"
 ):
-    x = torch.linspace(-1.0, 1.0, Nx).to(device)
+    if x_p is None:
+        x = torch.linspace(-1.0, 1.0, Nx).to(device)
+    else:
+        x = x_p
     t = torch.zeros_like(x).to(device)
     inputs = torch.stack([t, x], dim=1)
     mhd_state_variables = model(inputs)
@@ -161,7 +163,7 @@ def collocation_based_brio_and_wu_IC_BC_residual_loss(
         [mhd_state_variables[..., :-1], p.unsqueeze(1)], dim=1
     )
     # now construct the loss
-    ic_loss = torch.mean(
+    ic_loss = torch.sum(
         torch.square(mhd_state_variables_with_p - IC_mhd_state_variables)
     )
 
@@ -169,7 +171,10 @@ def collocation_based_brio_and_wu_IC_BC_residual_loss(
     IC_mhd_state_variables_left = IC_mhd_state_variables[0, :]
     IC_mhd_state_variables_right = IC_mhd_state_variables[-1, :]
 
-    t = torch.linspace(0.0, 0.2, Nt).to(device)
+    if t_p is None:
+        t = torch.linspace(0.0, 0.2, Nt).to(device)
+    else:
+        t = t_p
     x_left = -torch.ones_like(t)
     x_right = torch.ones_like(t)
     inputs_left = torch.stack([t, x_left], dim=1)
@@ -184,10 +189,10 @@ def collocation_based_brio_and_wu_IC_BC_residual_loss(
     mhd_state_variables_with_p_right = torch.cat(
         [mhd_state_variables_right[..., :-1], p_right.unsqueeze(1)], dim=1
     )
-    loss_left = torch.mean(
+    loss_left = torch.sum(
         torch.square(mhd_state_variables_with_p_left - IC_mhd_state_variables_left)
     )
-    loss_right = torch.mean(
+    loss_right = torch.sum(
         torch.square(mhd_state_variables_with_p_right - IC_mhd_state_variables_right)
     )
     bc_loss = 0.5 * (loss_left + loss_right)
@@ -257,6 +262,46 @@ def collocation_based_brio_and_wu_IC_BC_residual_loss_comparing_Es(
     bc_loss = 0.5 * (loss_left + loss_right)
 
     return ic_loss, bc_loss
+
+
+def cv_based_PDE_residual_loss(model, eos, mesh):
+    (
+        F_t_eval_points,
+        F_x_eval_points,
+        F_t_quad_weights,
+        F_x_quad_weights,
+    ) = mesh.get_training_eval_points_and_weights()
+
+    # F_t_eval_points and F_x_eval_points are structured like
+    # (time cell i, space cell j, quadrature point k, time or space coordinate 0 or 1),
+    # thus we can supply them both to the neural network to get the mhd_state_variables at all quadrature points
+    F_t_eval_points_mhd_state_variables = model(F_t_eval_points)
+    F_x_eval_points_mhd_state_variables = model(F_x_eval_points)
+
+    # get the fluxes corresponding to the state variables at these points
+    F_t_eval_points_fluxes, _ = construct_fluxes(
+        F_t_eval_points_mhd_state_variables, eos
+    )
+    _, F_x_eval_points_fluxes = construct_fluxes(
+        F_x_eval_points_mhd_state_variables, eos
+    )
+
+    # the quad weights are already organized on a per-cell basis and normalized to one, i.e., they are structured like
+    # (time cell i, space cell j, quadrature points for the "right" or "top" face of the cell + quadrature points for the "left" or "bottom" face of the cell)
+    # so for each cell, we need to compute the dot product of the fluxes with the quad weights, that is
+    # F_t_integrated_{ijkl} = \sum_{k} F_t_eval_points_fluxes{ijkl} * w_{ijk}, which we can write directly in Einstein notation
+    F_t_integrated = torch.einsum(
+        "ijkl,ijk->ijl", F_t_eval_points_fluxes, F_t_quad_weights
+    )
+    F_x_integrated = torch.einsum(
+        "ijkl,ijk->ijl", F_x_eval_points_fluxes, F_x_quad_weights
+    )
+
+    # now we can compute the PDE residual loss in the control volume formalism
+    loss_structure = torch.square((F_t_integrated + F_x_integrated))
+    loss = torch.sum(loss_structure)
+
+    return loss, loss_structure
 
 
 if __name__ == "__main__":
