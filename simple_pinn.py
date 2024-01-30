@@ -9,9 +9,9 @@ class SimplePINN(nn.Module):
         hidden_layers,
         output_size,
         activation=nn.ReLU(),
-        use_bias_in_output_layer=False,
+        use_bias_in_output_layer=True,
     ):
-        super(SimplePINN, self).__init__()
+        super().__init__()
         if len(hidden_layers) == 0:
             raise ValueError("hidden_layers must have at least one element")
         hidden_layers.insert(0, input_size)
@@ -35,6 +35,48 @@ class SimplePINN(nn.Module):
         return x
 
 
+class DirichletPINN(SimplePINN):
+    def __init__(
+        self,
+        input_size,
+        hidden_layers,
+        output_size,
+        mesh,
+        ic_state_vec_evaluation,
+        eos,
+        activation=nn.ReLU(),
+        use_bias_in_output_layer=True,
+    ):
+        super().__init__(
+            input_size,
+            hidden_layers,
+            output_size,
+            activation,
+            use_bias_in_output_layer,
+        )
+        self.t_domain = mesh.t_domain
+        self.x_domain = mesh.x_domain
+        self.ic_state_vec_evaluation = ic_state_vec_evaluation
+        self.eos = eos
+
+    def forward(self, input):
+        t = input[..., 0]
+        x = input[..., 1]
+        is_ic_or_bc = torch.logical_or(
+            t <= self.t_domain[0],
+            torch.logical_or(x <= self.x_domain[0], x >= self.x_domain[1]),
+        )
+        output = super().forward(input)
+        ic_state_vec = self.ic_state_vec_evaluation(input, self.eos)
+        # print out the names and shapes of the tensors involved in this function
+        # print("input", input.shape)
+        # print("output", output.shape)
+        # print("ic_state_vec", ic_state_vec.shape)
+        # print("is_ic_or_bc", is_ic_or_bc.shape)
+        output = torch.where(is_ic_or_bc.unsqueeze(-1), ic_state_vec, output)
+        return output
+
+
 # this version forces B_x equal to some supplied constant, as in the Brio and Wu shock tube problem,
 # obviating the need for the monopole loss
 class BrioAndWuPINN(SimplePINN):
@@ -47,7 +89,7 @@ class BrioAndWuPINN(SimplePINN):
         activation=nn.ReLU(),
         use_bias_in_output_layer=False,
     ):
-        super(BrioAndWuPINN, self).__init__(
+        super().__init__(
             input_size,
             hidden_layers,
             output_size - 1,
@@ -66,8 +108,42 @@ class BrioAndWuPINN(SimplePINN):
         return x
 
 
+# this version forces all B components to 0, and v_y and v_z to zero as well
+class SodPINN(SimplePINN):
+    def __init__(
+        self,
+        input_size,
+        hidden_layers,
+        output_size,
+        activation=nn.ReLU(),
+        use_bias_in_output_layer=False,
+    ):
+        super().__init__(
+            input_size,
+            hidden_layers,
+            output_size - 1,
+            activation,
+            use_bias_in_output_layer,
+        )
+
+    def forward(self, x):
+        for layer in self.hidden_layers:
+            x = layer(x)
+            x = self.activation(x)
+        x = self.head(x)
+        v_y = torch.zeros(x.shape[:-1]).unsqueeze(-1).to(x.device)
+        v_z = torch.zeros(x.shape[:-1]).unsqueeze(-1).to(x.device)
+        B_x = torch.zeros(x.shape[:-1]).unsqueeze(-1).to(x.device)
+        B_y = torch.zeros(x.shape[:-1]).unsqueeze(-1).to(x.device)
+        B_z = torch.zeros(x.shape[:-1]).unsqueeze(-1).to(x.device)
+        x = torch.cat(
+            [x[..., :2], v_y, v_z, B_x, B_y, B_z, x[..., -1].unsqueeze(-1)], dim=-1
+        )
+        return x
+
+
 if __name__ == "__main__":
-    mhd_state_variables_nn = BrioAndWuPINN(
+    mhd_state_variables_nn = SodPINN(
         2,
         [32, 32, 32, 32, 32],
         8,

@@ -1,5 +1,5 @@
-import scipy.special as sp
 import torch
+import scipy.special as sp
 import matplotlib.pyplot as plt
 
 
@@ -8,7 +8,7 @@ class CVMesh:
         self, t_domain, x_domain, Nt, Nx, quad_dict, quad_pts=None, requires_grad=False
     ):
         """
-        Initializes a CV_Mesh object.
+        Initializes a CVMesh object.
 
         Class generates a uniformly spaced Cartesian control volume mesh in two dimensions (t and x).
         The mesh spans from t_domain[0] to t_domain[1] and from x_domain[0] to x_domain[1].
@@ -63,14 +63,14 @@ class CVMesh:
         self.F_t_quad_weights = torch.zeros((Nt - 1, Nx - 1, 2 * num_quad_pts_t))
         self.F_x_quad_weights = torch.zeros((Nt - 1, Nx - 1, 2 * num_quad_pts_x))
         #
-        #         (X_c + dX/2, T_c)
-        #     +-----------*----------+
-        #     |                      |
-        #     |                      |
-        #   x |       (X_c, T_c)     * (T_c + dT/2, X_c)
-        #     |                      |
-        #     |                      |
-        #     +----------------------+
+        #         (T_c, X_c + dX/2)
+        #     +-----------*-----------+
+        #     |                       |
+        #     |                       |
+        #   x |       (T_c, X_c)      * (T_c + dT/2, X_c)
+        #     |                       |
+        #     |                       |
+        #     +-----------------------+
         #                 t
         #
         for i in range(Nt - 1):
@@ -209,7 +209,7 @@ class CVMesh:
             x = self.X[0, :]
         return t, x, inputs
 
-    def plot(self):
+    def plot(self, plot_cell_widths=False):
         """
         Plots the mesh of points T, X.
 
@@ -227,15 +227,16 @@ class CVMesh:
             marker="o",
             label="cell edges",
         )
-        # plt.errorbar(
-        #     self.T_c.detach().flatten(),
-        #     self.X_c.detach().flatten(),
-        #     xerr=self.dT.detach().flatten() / 2.0,
-        #     yerr=self.dX.detach().flatten() / 2.0,
-        #     color="black",
-        #     linestyle="",
-        #     capsize=3.0,
-        # )
+        if plot_cell_widths:
+            plt.errorbar(
+                self.T_c.detach().flatten(),
+                self.X_c.detach().flatten(),
+                xerr=self.dT.detach().flatten() / 2.0,
+                yerr=self.dX.detach().flatten() / 2.0,
+                color="black",
+                linestyle="",
+                capsize=3.0,
+            )
         plt.scatter(
             self.T_c.detach().flatten(),
             self.X_c.detach().flatten(),
