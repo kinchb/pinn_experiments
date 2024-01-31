@@ -5,7 +5,15 @@ import matplotlib.pyplot as plt
 
 class CVMesh:
     def __init__(
-        self, t_domain, x_domain, Nt, Nx, quad_dict, quad_pts=None, requires_grad=False
+        self,
+        t_domain,
+        x_domain,
+        Nt,
+        Nx,
+        quad_dict=None,
+        quad_pts=None,
+        quad_rule="composite_trapezoid",
+        requires_grad=False,
     ):
         """
         Initializes a CVMesh object.
@@ -18,16 +26,17 @@ class CVMesh:
         These tuples are expected to be PyTorch tensors, but ~will~ *should* be converted if they are not (TODO: this).
         The quadrature nodes are assumed to lie in the interval [-1, 1] and the weights are assumed to sum to 2.
         If quad_pts is not None, then it is assumed to be a tuple corresponding to the number of quadrature points
-        desired in the (t, x) directions, and the quadrature weights and nodes are computed using the Gauss-Legendre
-        quadrature rule instead of using the supplied dictionary.
+        desired in the (t, x) directions, and the quadrature weights and nodes will be computed using either the
+        trapezoid rule or the Gauss-Legendre quadrature rule, depending on the value of quad_rule, instead of using the supplied dictionary.
 
         Args:
             t_domain (tuple): A tuple representing the domain of the t-coordinate.
             x_domain (tuple): A tuple representing the domain of the x-coordinate.
             Nt (int): The number of grid points in the t-direction.
             Nx (int): The number of grid points in the x-direction.
-            quad_dict (dict): A dictionary containing the quadrature points and weights, as PyTorch tensors.
+            quad_dict (dict, optional): A dictionary containing the quadrature points and weights, as PyTorch tensors. Used if supplied. Defaults to None.
             quad_pts (tuple, optional): A tuple representing the number of quadrature points in the t and x directions. Defaults to None.
+            quad_rule (str): The quadrature rule to use. Either "composite_trapezoid" or "gauss-legendre." Defaults to "composite_trapezoid."
             requires_grad (bool, optional): Whether the evaluation points require gradients. Defaults to False.
         """
         self.t_domain = t_domain
@@ -40,10 +49,32 @@ class CVMesh:
             if isinstance(quad_pts, tuple) and len(quad_pts) == 2:
                 num_quad_pts_t = quad_pts[0]
                 num_quad_pts_x = quad_pts[1]
-                t_gl = sp.roots_legendre(num_quad_pts_t)
-                self.quad_dict["t"] = (torch.tensor(t_gl[0]), torch.tensor(t_gl[1]))
-                x_gl = sp.roots_legendre(num_quad_pts_x)
-                self.quad_dict["x"] = (torch.tensor(x_gl[0]), torch.tensor(x_gl[1]))
+                if quad_rule == "composite_trapezoid":
+                    w_t = torch.tensor([1.0] + [2.0] * (num_quad_pts_t - 2) + [1.0])
+                    w_t = 2.0 * w_t / torch.sum(w_t)
+                    self.quad_dict["t"] = (
+                        torch.linspace(-1.0, 1.0, num_quad_pts_t),
+                        w_t,
+                    )
+                    w_x = torch.tensor([1.0] + [2.0] * (num_quad_pts_x - 2) + [1.0])
+                    w_x = 2.0 * w_x / torch.sum(w_x)
+                    self.quad_dict["x"] = (
+                        torch.linspace(-1.0, 1.0, num_quad_pts_x),
+                        w_x,
+                    )
+                elif quad_rule == "gauss-legendre":
+                    t_gl = sp.roots_legendre(num_quad_pts_t)
+                    self.quad_dict["t"] = (torch.tensor(t_gl[0]), torch.tensor(t_gl[1]))
+                    x_gl = sp.roots_legendre(num_quad_pts_x)
+                    self.quad_dict["x"] = (torch.tensor(x_gl[0]), torch.tensor(x_gl[1]))
+                else:
+                    raise ValueError(
+                        "quad_rule must be either 'composite_trapezoid' or 'gauss-legendre'"
+                    )
+            else:
+                raise ValueError(
+                    "quad_pts must be a tuple of length 2 containing the number of quadrature points in the t and x directions"
+                )
         num_quad_pts_t = len(self.quad_dict["t"][0])
         num_quad_pts_x = len(self.quad_dict["x"][0])
         self.t = torch.linspace(t_domain[0], t_domain[1], Nt)
@@ -214,7 +245,11 @@ class CVMesh:
         Plots the mesh of points T, X.
 
         This method creates a scatter plot of the cell edges, cell centers, F_t evaluation points, and F_x evaluation points.
-        The x-axis represents the T values and the y-axis represents the X values.
+        Useful for diagnosing issues with the mesh. Will plot the cell widths if plot_cell_widths is True, using error bars,
+        but this can look very messy for even slightly large meshes. The x-axis represents time and the y-axis represents space ("x").
+
+        Args:
+            plot_cell_widths (bool, optional): Whether to plot the cell widths. Defaults to False.
 
         Returns:
             None
@@ -274,4 +309,6 @@ if __name__ == "__main__":
     x_domain = [-1.0, 1.0]
     Nt = 6
     Nx = 11
-    cv_mesh = CVMesh(t_domain, x_domain, Nt, Nx, None, quad_pts=(4, 4))
+    mesh = CVMesh(
+        t_domain, x_domain, Nt, Nx, quad_pts=(4, 4), quad_rule="composite_trapezoid"
+    )

@@ -68,94 +68,39 @@ class DirichletPINN(SimplePINN):
         )
         output = super().forward(input)
         ic_state_vec = self.ic_state_vec_evaluation(input, self.eos)
-        # print out the names and shapes of the tensors involved in this function
-        # print("input", input.shape)
-        # print("output", output.shape)
-        # print("ic_state_vec", ic_state_vec.shape)
-        # print("is_ic_or_bc", is_ic_or_bc.shape)
         output = torch.where(is_ic_or_bc.unsqueeze(-1), ic_state_vec, output)
         return output
 
 
 # this version forces B_x equal to some supplied constant, as in the Brio and Wu shock tube problem,
 # obviating the need for the monopole loss
-class BrioAndWuPINN(SimplePINN):
+class BrioAndWuPINN(DirichletPINN):
     def __init__(
         self,
         input_size,
         hidden_layers,
         output_size,
+        mesh,
+        ic_state_vec_evaluation,
+        eos,
         B_x=0.75,
         activation=nn.ReLU(),
-        use_bias_in_output_layer=False,
+        use_bias_in_output_layer=True,
     ):
         super().__init__(
             input_size,
             hidden_layers,
-            output_size - 1,
+            output_size,
+            mesh,
+            ic_state_vec_evaluation,
+            eos,
             activation,
             use_bias_in_output_layer,
         )
         self.B_x = B_x
 
     def forward(self, x):
-        for layer in self.hidden_layers:
-            x = layer(x)
-            x = self.activation(x)
-        x = self.head(x)
+        x = super().forward(x)
         B_x = self.B_x * torch.ones(x.shape[:-1]).unsqueeze(-1).to(x.device)
-        x = torch.cat([x[..., :4], B_x, x[..., 4:]], dim=-1)
+        x = torch.cat([x[..., :4], B_x, x[..., 5:]], dim=-1)
         return x
-
-
-# this version forces all B components to 0, and v_y and v_z to zero as well
-class SodPINN(SimplePINN):
-    def __init__(
-        self,
-        input_size,
-        hidden_layers,
-        output_size,
-        activation=nn.ReLU(),
-        use_bias_in_output_layer=False,
-    ):
-        super().__init__(
-            input_size,
-            hidden_layers,
-            output_size - 1,
-            activation,
-            use_bias_in_output_layer,
-        )
-
-    def forward(self, x):
-        for layer in self.hidden_layers:
-            x = layer(x)
-            x = self.activation(x)
-        x = self.head(x)
-        v_y = torch.zeros(x.shape[:-1]).unsqueeze(-1).to(x.device)
-        v_z = torch.zeros(x.shape[:-1]).unsqueeze(-1).to(x.device)
-        B_x = torch.zeros(x.shape[:-1]).unsqueeze(-1).to(x.device)
-        B_y = torch.zeros(x.shape[:-1]).unsqueeze(-1).to(x.device)
-        B_z = torch.zeros(x.shape[:-1]).unsqueeze(-1).to(x.device)
-        x = torch.cat(
-            [x[..., :2], v_y, v_z, B_x, B_y, B_z, x[..., -1].unsqueeze(-1)], dim=-1
-        )
-        return x
-
-
-if __name__ == "__main__":
-    mhd_state_variables_nn = SodPINN(
-        2,
-        [32, 32, 32, 32, 32],
-        8,
-        activation=nn.Softplus(),
-    )
-
-    Nt = 101
-    Nx = 301
-
-    t = torch.linspace(0.0, 0.2, Nt, requires_grad=True)
-    x = torch.linspace(-1.0, 1.0, Nx, requires_grad=True)
-    T, X = torch.meshgrid(t, x, indexing="ij")
-    inputs = torch.stack([T, X], dim=len(T.shape))
-
-    mhd_state_variables = mhd_state_variables_nn(inputs)

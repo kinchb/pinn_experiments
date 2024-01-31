@@ -1,5 +1,7 @@
 import torch
 import matplotlib.pyplot as plt
+from pyrecorder.recorder import Recorder
+from pyrecorder.writers.gif import GIF
 
 
 class CVSolver:
@@ -100,16 +102,15 @@ class CVSolver:
         plt.semilogy()
         plt.show()
 
-    def plot_components(
-        self,
-        t_ndx,
-        num_rows=1,
-        num_cols=None,
-        centered=False,
-        with_ics=False,
-        with_analytic_soln=False,
-        loss_to_plot=None,
-    ):
+    def plot_components(self, t_ndx, **kwargs):
+        animating = kwargs.get("animating", False)
+        num_rows = kwargs.get("num_rows", 1)
+        num_cols = kwargs.get("num_cols", None)
+        centered = kwargs.get("centered", False)
+        with_ics = kwargs.get("with_ics", False)
+        with_analytic_soln = kwargs.get("with_analytic_soln", False)
+        loss_to_plot = kwargs.get("loss_to_plot", None)
+
         if num_cols is None:
             num_cols = self.model.head.out_features
 
@@ -122,7 +123,12 @@ class CVSolver:
         x = x.to("cpu").detach().numpy()
         outputs = outputs.to("cpu").detach().numpy()
 
-        fig, axs = plt.subplots(num_rows, num_cols, figsize=(12, 8), squeeze=False)
+        fig_width = 4 * num_cols
+        fig_height = 3 * num_rows
+
+        fig, axs = plt.subplots(
+            num_rows, num_cols, figsize=(fig_width, fig_height), squeeze=False
+        )
         fig.suptitle("Component Plots at t = {t:.2f}".format(t=t[t_ndx]))
 
         if len(self.component_names) == 0:
@@ -163,4 +169,18 @@ class CVSolver:
                 ax2.set_ylabel(f"{loss_to_plot} Loss", color="red")
 
         plt.tight_layout()
-        plt.show()
+        if not animating:
+            plt.show()
+
+    def animate_components(self, filename, fps=10, **kwargs):
+        centered = kwargs.get("centered", False)
+        t, _, _ = self.mesh.get_eval_points(centered=centered)
+        # this might be in hundredths of a second? I need a better GIF viewer...
+        duration = 1.0 / fps
+        print(f"duration = {duration}")
+        with Recorder(GIF(filename, duration=duration)) as rec:
+            for t_ndx in range(len(t)):
+                print(f"t_ndx = {t_ndx}/{len(t)}")
+                self.plot_components(t_ndx, animating=True, **kwargs)
+                rec.record()
+        rec.close()
