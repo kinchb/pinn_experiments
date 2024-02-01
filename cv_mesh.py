@@ -18,7 +18,7 @@ class CVMesh:
         """
         Initializes a CVMesh object.
 
-        Class generates a uniformly spaced Cartesian control volume mesh in two dimensions (t and x).
+        This class generates a uniformly spaced Cartesian control volume mesh in two dimensions (t and x).
         The mesh spans from t_domain[0] to t_domain[1] and from x_domain[0] to x_domain[1].
         The mesh is composed of Nt-1 cells in the t direction and Nx-1 cells in the x direction.
         Quad_dict is assumed to contain the quadrature weights and nodes for the t and x directions,
@@ -206,16 +206,18 @@ class CVMesh:
 
     def get_training_eval_points_and_weights(self):
         """
-        Returns the evaluation points and weights for the F_t and F_x.
+        Returns the evaluation points, weights, and differentials, for F_t and F_x.
 
         Returns:
-            tuple: A tuple containing F_t_eval_points, F_x_eval_points, F_t_quad_weights, F_x_quad_weights.
+            tuple: A tuple containing F_t_eval_points, F_x_eval_points, F_t_quad_weights, F_x_quad_weights, dT, dX.
         """
         return (
             self.F_t_eval_points,
             self.F_x_eval_points,
             self.F_t_quad_weights,
             self.F_x_quad_weights,
+            self.dT,
+            self.dX,
         )
 
     def get_eval_points(self, centered=True):
@@ -226,16 +228,14 @@ class CVMesh:
             centered (bool, optional): Whether to return centered evaluation points. Defaults to True.
 
         Returns:
-            t (torch.Tensor): Time values.
-            x (torch.Tensor): Spatial values.
-            inputs (torch.Tensor): Stacked input values.
+            tuple: A tuple containing the t and x coordinates, and the evaluation points.
         """
         if centered:
-            inputs = torch.stack([self.T_c, self.X_c], dim=len(self.T_c.shape))
+            inputs = torch.stack([self.T_c, self.X_c], dim=-1)
             t = self.T_c[:, 0]
             x = self.X_c[0, :]
         else:
-            inputs = torch.stack([self.T, self.X], dim=len(self.T.shape))
+            inputs = torch.stack([self.T, self.X], dim=-1)
             t = self.T[:, 0]
             x = self.X[0, :]
         return t, x, inputs
@@ -250,9 +250,6 @@ class CVMesh:
 
         Args:
             plot_cell_widths (bool, optional): Whether to plot the cell widths. Defaults to False.
-
-        Returns:
-            None
         """
         plt.figure()
         plt.scatter(

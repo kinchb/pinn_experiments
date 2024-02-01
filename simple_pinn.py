@@ -11,6 +11,16 @@ class SimplePINN(nn.Module):
         activation=nn.ReLU(),
         use_bias_in_output_layer=True,
     ):
+        """
+        Initialize a SimplePINN object. Basically just a feedforward dense neural network.
+
+        Args:
+            input_size (int): The input size; e.g., 2 for a 2D (1 time and 1 space) input point, like (t, x).
+            hidden_layers (list): A list of integers representing the sizes of the hidden layers.
+            output_size (int): The size of the output layer. Typically how many components are in the state vector.
+            activation (torch.nn.Module, optional): The activation function to use in the hidden layers. Defaults to nn.ReLU().
+            use_bias_in_output_layer (bool, optional): Whether to use bias in the output layer. Defaults to True.
+        """
         super().__init__()
         if len(hidden_layers) == 0:
             raise ValueError("hidden_layers must have at least one element")
@@ -47,6 +57,20 @@ class DirichletPINN(SimplePINN):
         activation=nn.ReLU(),
         use_bias_in_output_layer=True,
     ):
+        """
+        Initialize a slightly more advanced PINN object that enforces Dirichlet boundary conditions.
+
+        Args:
+            input_size (int): The input size; e.g., 2 for a 2D (1 time and 1 space) input point, like (t, x).
+            hidden_layers (list): A list of integers representing the sizes of the hidden layers.
+            output_size (int): The size of the output layer. Typically how many components are in the state vector.
+            mesh (CVMesh): An instance of the Mesh class representing the mesh used in the problem.
+            ic_state_vec_evaluation (callable): A function that evaluates the initial condition state vector.
+            eos (callable): The equation of state; its inputs and outputs are arbitrary with respect to this class,
+                so long as it's compatible with ic_state_vec_evaluation.
+            activation (torch.nn.Module, optional): The activation function to use in the hidden layers. Defaults to nn.ReLU().
+            use_bias_in_output_layer (bool, optional): Whether to use bias in the output layer. Defaults to True.
+        """
         super().__init__(
             input_size,
             hidden_layers,
@@ -62,6 +86,7 @@ class DirichletPINN(SimplePINN):
     def forward(self, input):
         t = input[..., 0]
         x = input[..., 1]
+        # test if any of the inputs, (t, x), are on the time or space boundary, and use the initial condition state vector if so
         is_ic_or_bc = torch.logical_or(
             t <= self.t_domain[0],
             torch.logical_or(x <= self.x_domain[0], x >= self.x_domain[1]),
@@ -72,8 +97,6 @@ class DirichletPINN(SimplePINN):
         return output
 
 
-# this version forces B_x equal to some supplied constant, as in the Brio and Wu shock tube problem,
-# obviating the need for the monopole loss
 class BrioAndWuPINN(DirichletPINN):
     def __init__(
         self,
@@ -87,6 +110,23 @@ class BrioAndWuPINN(DirichletPINN):
         activation=nn.ReLU(),
         use_bias_in_output_layer=True,
     ):
+        """
+        Initialize a slightly specialized PINN object that both enforces Dirichlet boundary conditions and outputs a
+        constant magnetic field in the x-direction. Note that without this, we'd have to calculate the divergence of
+        the magnetic field and constrain it to be zero (i.e., to require no monopoles).
+
+        Args:
+            input_size (int): The input size; e.g., 2 for a 2D (1 time and 1 space) input point, like (t, x).
+            hidden_layers (list): A list of integers representing the sizes of the hidden layers.
+            output_size (int): The size of the output layer. Typically how many components are in the state vector.
+            mesh (CVMesh): An instance of the Mesh class representing the mesh used in the problem.
+            ic_state_vec_evaluation (callable): A function that evaluates the initial condition state vector.
+            eos (callable): The equation of state; its inputs and outputs are arbitrary with respect to this class,
+                so long as it's compatible with ic_state_vec_evaluation.
+            B_x (float, optional): The constant magnetic field in the x-direction. Defaults to 0.75.
+            activation (torch.nn.Module, optional): The activation function to use in the hidden layers. Defaults to nn.ReLU().
+            use_bias_in_output_layer (bool, optional): Whether to use bias in the output layer. Defaults to True.
+        """
         super().__init__(
             input_size,
             hidden_layers,
@@ -101,6 +141,7 @@ class BrioAndWuPINN(DirichletPINN):
 
     def forward(self, x):
         x = super().forward(x)
+        # plug in the constant magnetic field in the x-direction
         B_x = self.B_x * torch.ones(x.shape[:-1]).unsqueeze(-1).to(x.device)
         x = torch.cat([x[..., :4], B_x, x[..., 5:]], dim=-1)
         return x
