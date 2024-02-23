@@ -99,7 +99,7 @@ class AthenaReader:
             noise_level (float, optional): The relative noise level to superimpose on the state vector at the sample points. Defaults to 0.
         """
         self.sample_points = sample_points
-        self.sample_state_vec = self(sample_points.cpu())
+        self.sample_state_vec = self(self.sample_points.detach().cpu())
         if noise_level > 0:
             self.sample_state_vec *= torch.ones_like(
                 self.sample_state_vec

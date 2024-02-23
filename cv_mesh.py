@@ -1,6 +1,8 @@
 import torch
 import scipy.special as sp
 import matplotlib.pyplot as plt
+import pickle
+import hashlib
 
 
 class CVMesh:
@@ -14,6 +16,7 @@ class CVMesh:
         quad_pts=None,
         quad_rule="composite_trapezoid",
         requires_grad=False,
+        dtype=torch.float32,
     ):
         """
         Initializes a CVMesh object.
@@ -38,12 +41,27 @@ class CVMesh:
             quad_pts (tuple, optional): A tuple representing the number of quadrature points in the t and x directions. Defaults to None.
             quad_rule (str): The quadrature rule to use. Either "composite_trapezoid" or "gauss-legendre." Defaults to "composite_trapezoid."
             requires_grad (bool, optional): Whether the evaluation points require gradients. Defaults to False.
+            dtype (torch.dtype, optional): The data type of the mesh. Defaults to torch.float32.
         """
         self.t_domain = t_domain
         self.x_domain = x_domain
         self.Nt = Nt
         self.Nx = Nx
         self.quad_dict = quad_dict
+        self.quad_pts = quad_pts
+        self.quad_rule = quad_rule
+        self.requires_grad = requires_grad
+        self.dtype = dtype
+        # the above set of inputs fully specify the mesh; to save time, we'll try to load the mesh from a file
+        self.generate_inputs_hash()
+        flnm = "./.mesh/mesh_" + self.inputs_hash + ".pkl"
+        mesh_data = CVMesh.load(flnm)
+        if mesh_data is not None:
+            self.__dict__.update(mesh_data.__dict__)
+            self.update_dtype(self.dtype)
+            self.update_requires_grad(self.requires_grad)
+            return
+        # if the mesh is not found, we'll generate it
         if quad_pts:
             self.quad_dict = {}
             if isinstance(quad_pts, tuple) and len(quad_pts) == 2:
@@ -162,9 +180,48 @@ class CVMesh:
                 self.F_x_quad_weights[i, j, :] = (
                     torch.cat((self.quad_dict["t"][1], -self.quad_dict["t"][1])) / 2.0
                 )
-        if requires_grad:
-            self.F_t_eval_points.requires_grad_()
-            self.F_x_eval_points.requires_grad_()
+
+        self.update_dtype(self.dtype)
+        self.update_requires_grad(self.requires_grad)
+
+        # save the mesh to a file for next time
+        self.save(flnm)
+
+    def update_dtype(self, dtype):
+        """
+        Updates the data type of the mesh.
+
+        Args:
+            dtype (torch.dtype): The new data type.
+        """
+        self.T = self.T.type(dtype)
+        self.X = self.X.type(dtype)
+        self.T_c = self.T_c.type(dtype)
+        self.X_c = self.X_c.type(dtype)
+        self.dT = self.dT.type(dtype)
+        self.dX = self.dX.type(dtype)
+        self.F_t_eval_points = self.F_t_eval_points.type(dtype)
+        self.F_x_eval_points = self.F_x_eval_points.type(dtype)
+        self.F_t_quad_weights = self.F_t_quad_weights.type(dtype)
+        self.F_x_quad_weights = self.F_x_quad_weights.type(dtype)
+
+    def update_requires_grad(self, requires_grad):
+        """
+        Updates whether the mesh requires gradients.
+
+        Args:
+            requires_grad (bool): Whether the mesh requires gradients.
+        """
+        self.T.requires_grad_(requires_grad)
+        self.X.requires_grad_(requires_grad)
+        self.T_c.requires_grad_(requires_grad)
+        self.X_c.requires_grad_(requires_grad)
+        self.dT.requires_grad_(requires_grad)
+        self.dX.requires_grad_(requires_grad)
+        self.F_t_eval_points.requires_grad_(requires_grad)
+        self.F_x_eval_points.requires_grad_(requires_grad)
+        self.F_t_quad_weights.requires_grad_(requires_grad)
+        self.F_x_quad_weights.requires_grad_(requires_grad)
 
     def to(self, device="cpu"):
         """
@@ -299,6 +356,53 @@ class CVMesh:
         plt.legend(loc="best")
         plt.title("Mesh of Points T, X")
         plt.show()
+
+    def generate_inputs_hash(self):
+        """
+        Generate a hash of the class-defining inputs.
+
+        Returns:
+            str: A hash of the mesh.
+        """
+        str_to_hash = (
+            str(self.t_domain)
+            + str(self.x_domain)
+            + str(self.Nt)
+            + str(self.Nx)
+            + str(self.quad_dict)
+            + str(self.quad_pts)
+            + str(self.quad_rule)
+            + str(self.requires_grad)
+            + str(self.dtype)
+        ).encode("utf-8")
+        self.inputs_hash = hashlib.sha256(str_to_hash).hexdigest()
+
+    def save(self, flnm):
+        """
+        Save the mesh to a file.
+
+        Args:
+            flnm (str): The filename to save the mesh to.
+        """
+        with open(flnm, "wb") as f:
+            pickle.dump(self, f)
+
+    @classmethod
+    def load(cls, flnm):
+        """
+        Load a mesh from a file.
+
+        Args:
+            flnm (str): The filename to load the mesh from.
+
+        Returns:
+            CVMesh: The loaded mesh.
+        """
+        try:
+            with open(flnm, "rb") as f:
+                return pickle.load(f)
+        except:
+            return None
 
 
 if __name__ == "__main__":

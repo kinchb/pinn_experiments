@@ -18,9 +18,7 @@ def ideal_equation_of_state(mhd_state_variables, gamma=1.4):
     B_z = mhd_state_variables[..., 6]
     E = mhd_state_variables[..., 7]
     return (gamma - 1.0) * (
-        E
-        - rho * (v_x**2 + v_y**2 + v_z**2) / 2.0
-        - (B_x**2 + B_y**2 + B_z**2) / 2.0
+        E - rho * (v_x**2 + v_y**2 + v_z**2) / 2.0 - (B_x**2 + B_y**2 + B_z**2) / 2.0
     )
 
 
@@ -90,9 +88,7 @@ def construct_fluxes(
     # now construct the entropy fluxes
     E = mhd_state_variables[..., 7]
     e = (
-        E
-        - rho * (v_x**2 + v_y**2 + v_z**2) / 2.0
-        - (B_x**2 + B_y**2 + B_z**2) / 2.0
+        E - rho * (v_x**2 + v_y**2 + v_z**2) / 2.0 - (B_x**2 + B_y**2 + B_z**2) / 2.0
     ) / rho
     eps = torch.tensor(1.0e-9)
     gamma = 1.4
